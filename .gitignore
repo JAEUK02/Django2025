@@ -170,4 +170,4 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .idea/
-migrations/
+# Keep Django migrations in version control for reproducible fresh installs.

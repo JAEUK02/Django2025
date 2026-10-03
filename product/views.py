@@ -1,7 +1,8 @@
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth.decorators import login_required
-from product.models import MainContent
+from django.views.decorators.http import require_http_methods, require_POST
+from product.models import Comment, MainContent
 from .forms import CommentForm
 
 
@@ -14,10 +15,11 @@ def index(request):
 
 def detail(request, content_id):
     content_list = get_object_or_404(MainContent,pk=content_id)
-    context = {'content_list': content_list}
+    context = {'content_list': content_list, 'form': CommentForm()}
     return render(request, 'product/content_detail.html', context)
 
 @login_required(login_url='accounts:login')
+@require_http_methods(['GET', 'POST'])
 def comment_create(request, content_id):
     content_list = get_object_or_404(MainContent, pk=content_id)
     if request.method == 'POST':
@@ -35,6 +37,7 @@ def comment_create(request, content_id):
     return render(request, 'product/content_detail.html', context)
 
 @login_required(login_url='accounts:login')
+@require_http_methods(['GET', 'POST'])
 def comment_update(request, comment_id):
     comment = get_object_or_404(Comment, pk=comment_id)
     if request.user != comment.author:
@@ -45,16 +48,17 @@ def comment_update(request, comment_id):
             comment = form.save(commit=False)
             comment.save()
             return redirect('detail', content_id=comment.content_list.id)
-        else:
-            form = CommentForm(instance=comment)
-        context = {'comment': comment, 'form': form}
-        return render(request, 'product/comment_form.html', context)
+    else:
+        form = CommentForm(instance=comment)
+    context = {'comment': comment, 'form': form}
+    return render(request, 'product/comment_form.html', context)
 
 @login_required(login_url='accounts:login')
+@require_POST
 def comment_delete(request, comment_id):
     comment = get_object_or_404(Comment, pk=comment_id)
     if request.user != comment.author:
         raise PermissionDenied
-    else:
-        comment.delete()
-    return redirect('detail', content_id=comment.content_list.id)
+    content_id = comment.content_list_id
+    comment.delete()
+    return redirect('detail', content_id=content_id)
