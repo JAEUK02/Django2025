@@ -1,6 +1,6 @@
 # Source walkthrough and verification
 
-This guide follows the application-code snapshot at [`d36055e`](https://github.com/JAEUK02/Django2025/tree/d36055e0b8104acfdd7272253edf648a8920593d). It separates the request flow visible in the code from the behavior checked in a disposable local environment.
+This guide follows the comment-path repair built on [the reviewed baseline](https://github.com/JAEUK02/Django2025/tree/3d999636873441e9406611ef3501aa934b9dad5a). It separates the application flow, fresh-install schema, and verified regression coverage from work that remains untested.
 
 ## Read one request end to end
 
@@ -27,56 +27,79 @@ This is a server-rendered Django application: view functions assemble template c
 | `/accounts/login/` | `LoginView` | Built-in authentication with a custom template |
 | `/accounts/logout/` | `LogoutView` | POST form in the navbar |
 | `/product/comment/create/<id>/` | `comment_create` | Login requirement, form, and relationship assignment |
-| `/product/comment/update/<id>/` | `comment_update` | Intended ownership check and edit form |
-| `/product/comment/delete/<id>/` | `comment_delete` | Intended ownership check and deletion |
+| `/product/comment/update/<id>/` | `comment_update` | Owner-only GET edit form and POST validation |
+| `/product/comment/delete/<id>/` | `comment_delete` | Owner-only POST deletion with CSRF protection |
 | `/admin/` | Django admin | `MainContent` and `Comment` registration |
 
-The comment routes are incomplete. Their presence in the route map does not mean they pass runtime checks.
+Create and update accept GET/POST; delete accepts POST only. Login is required for all three. The form exposes only `content`, while the view binds or preserves the author and parent record.
 
-## Local diagnostic setup
+## Fresh database and migration contract
 
-The 2026-10-03 diagnostic used Python 3.12.14 and Django 5.1.1, matching the version named in the settings header. Installed dependencies were `asgiref==3.12.1` and `sqlparse==0.6.0`. This is a historical compatibility check, not an endorsement of these versions for a new deployment.
+The tracked [initial product migration](../product/migrations/0001_initial.py) creates `MainContent` and `Comment`. `Comment.author` points to `settings.AUTH_USER_MODEL`, and the migration declares `migrations.swappable_dependency(settings.AUTH_USER_MODEL)`.
 
-In a disposable environment containing only synthetic data:
+The local `accounts` and `pages` apps define no database models, so they need no initial schema migration. Django's built-in auth, admin, contenttypes, and session migrations are supplied by Django. The previous blanket `migrations/` ignore rule has been removed so the product migration is versioned.
+
+For a **new disposable checkout with no existing database**, follow the environment setup in the README, then:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install "Django==5.1.1" "asgiref==3.12.1" "sqlparse==0.6.0"
 python manage.py check
-python manage.py makemigrations product
 python manage.py migrate
+python manage.py showmigrations product
+python manage.py makemigrations --check --dry-run
 python manage.py test
 ```
 
-On Windows, activate with `.venv\Scripts\activate`. The repository does not commit product migrations; the commands generate them locally. Do not mistake locally generated migrations or a development database for delivered repository assets. Use a temporary development key and keep any development server bound to localhost. The checked-in settings are unsuitable for deployment.
+`showmigrations product` should show `[X] 0001_initial`. The drift check should report no changes. A second `migrate` should report no migrations to apply. The checked-in migration supplies the initial schema; do not generate a different local initial migration as part of a fresh install.
 
-## What was actually verified
+### Existing databases need a separate plan
 
-The diagnostic used a local copy of Python files and templates, a placeholder development key, and synthetic records. Static assets were not visually reviewed. No server was exposed and no production data was used.
+An existing development database may have the old self-referencing `Comment.author` foreign key and locally generated migrations that were never committed. It may already record a migration named `product.0001_initial`. Reusing that name does not cause Django to rewrite the old schema.
 
-| Check | Result |
-| --- | --- |
-| Python source compilation | Passed |
-| `manage.py check` | No issues reported |
-| Generate product migrations and migrate a fresh local SQLite database | Passed |
-| `manage.py test` | **0 tests discovered** |
-| Test-client GET: home, company, content list/detail, login, signup | HTTP 200 after local schema setup |
-| Anonymous request to comment update | HTTP 302 to login |
-| Authenticated valid comment-create POST | `ValueError`: the author relation expects a `Comment`, but the view assigns a user |
-| Authenticated comment update/delete | `NameError`: `Comment` is not imported by the view module |
-| Content-detail body rendering | The body marker is absent; an unclosed template expression is rendered literally |
+Before any upgrade, a maintainer must separately inspect the actual schema, recorded migration history, local migration files, and existing ownership data, with a recoverable backup. Numeric values that referenced comments cannot safely be reinterpreted as user IDs.
 
-HTTP 200 establishes only that a response was rendered. It does not establish correct layout, successful signup/login, authorization coverage, or a working comment feature. In particular, the detail template contains `{{content_list.content}` with a missing closing brace.
+This repair does **not** supply an existing-database conversion or authorize a reset. Do not delete a database or migration history, or use `--fake` / `--fake-initial` as a shortcut. Django's initial-migration detection does not establish that an existing self-FK is compatible with the new user FK. See the [official migration guidance](https://docs.djangoproject.com/en/5.2/topics/migrations/#initial-migrations).
 
-## Bounded next code review
+## Repair verification
 
-A focused follow-up can be checked without expanding this coursework into a new product:
+Verified on 2026-10-03 in isolated Python 3.12.14 environments:
 
-- Align `Comment.author` with the configured user model, import the model used by the views, and preserve ownership enforcement.
-- Make update GET return its form and invalid POST retain form errors.
-- Require POST plus CSRF protection for deletion; the current delete view has no HTTP-method guard and the template uses a link.
-- Correct content interpolation and malformed markup in the detail template.
-- Add tests for two different users, anonymous requests, invalid forms, successful create/update/delete, and GET requests that must not mutate data.
+| Check | Django 5.2.17 | Django 5.1.1 historical compatibility |
+| --- | --- | --- |
+| Full available test suite | 27 passed | 27 passed |
+| Fresh SQLite migration using the tracked initial migration | Passed | Passed |
+| Repeat migration | No migrations to apply | No migrations to apply |
+| `makemigrations --check --dry-run` | No changes detected | No changes detected |
+| Synthetic user/content/comment creation in the migrated schema | Passed | Passed |
 
-These are proposed acceptance criteria. This documentation update does not modify application behavior or claim the fixes are complete.
+The fresh-schema check also inspected the actual SQLite foreign keys: `author_id` references `auth_user.id`, and `content_list_id` references `product_maincontent.id`. The product initial migration was recorded as applied.
+
+Django system checks, Python source compilation, and `git diff --check` also passed. Both environments used `asgiref==3.12.1` and `sqlparse==0.6.0`. Django 5.1.1 was used only to compare against the original coursework environment; it is an unsupported historical version. The README's local setup uses the tested 5.2 LTS release; see [Django's support table](https://www.djangoproject.com/download/#supported-versions).
+
+Tests run against temporary test databases; the independent migration checks used newly created disposable SQLite files and synthetic records. The local audit used a placeholder development key. No existing user database was read or migrated.
+
+### What the tests exercise
+
+[`product/tests.py`](../product/tests.py) covers:
+
+- Actual body rendering and automatic escaping of body/comment text, including text that could otherwise escape a textarea.
+- Valid create/update operations, correct redirects, and rejection of forged author or parent inputs.
+- Edit-form GET responses and invalid empty/whitespace submissions that retain bound data and visible errors.
+- Owner, non-owner, and anonymous requests, with stored records checked after denied actions.
+- GET/HEAD/unsupported-method deletion attempts that return 405 without deleting anything.
+- Valid owner POST deletion that removes only the selected comment.
+- Create, update, and delete requests with `Client(enforce_csrf_checks=True)`: missing tokens return 403 without mutation; tokens obtained from rendered forms permit valid requests.
+- An owner-only delete POST form with its own CSRF input, no nested forms, and no destructive delete link.
+- Comment admin search through the related author's username.
+
+Three focused tests were run against the pre-repair source and failed on the reproduced author assignment, missing `Comment` import, and missing body interpolation. The repaired full suite passes.
+
+## Scope and remaining limits
+
+The repair addresses the demonstrated comment-path defects: author relation/import, update GET and bound errors, body interpolation and malformed form markup, POST-only deletion, and the associated admin author lookup.
+
+This is still coursework, with a bounded regression suite:
+
+- No existing-database upgrade was attempted or verified.
+- Account signup/login journeys, visual browser layout, broader application coverage, accessibility, and deployment were not validated by this repair.
+- Development settings remain unsuitable for production.
+- There is no CI workflow or dependency lock in this repository. A local green suite is not a remote CI result.

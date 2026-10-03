@@ -1,5 +1,5 @@
+from django.conf import settings
 from django.db import models
-from django.contrib.auth.models import User
 
 # Create your models here.
 class MainContent(models.Model):
@@ -10,7 +10,7 @@ class MainContent(models.Model):
         return self.title
 
 class Comment(models.Model):
-    author = models.ForeignKey('self', on_delete=models.CASCADE)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     content_list = models.ForeignKey(MainContent, on_delete=models.CASCADE)
     content = models.TextField()
     create_date = models.DateTimeField(auto_now_add=True)

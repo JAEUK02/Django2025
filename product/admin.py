@@ -8,7 +8,7 @@ class MainContentAdmin(admin.ModelAdmin):
     search_fields = ['title']
 class CommentAdmin(admin.ModelAdmin):
     list_display = ['content_list', 'content', 'author', 'create_date', 'modify_date']
-    search_fields = ['author']
+    search_fields = ['author__username']
 
 admin.site.register(MainContent, MainContentAdmin)
 admin.site.register(Comment, CommentAdmin)
